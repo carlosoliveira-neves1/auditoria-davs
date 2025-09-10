@@ -1,0 +1,14 @@
+﻿{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/compare.py",
+      "use": "@vercel/python",
+      "config": { "pythonVersion": "3.11" }
+    }
+  ],
+  "routes": [
+    { "src": "/api/compare", "dest": "/api/compare.py" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}

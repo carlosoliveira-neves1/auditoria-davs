@@ -1,0 +1,176 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Conciliação de Vendas</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 24px; text-align: center; background: #111827; border-bottom: 1px solid #1f2937; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 16px; }
+    .card { background: #0b1220; border: 1px solid #1f2937; border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(0,0,0,.2); }
+    h1 { margin: 0; font-size: 22px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+    .kpi .box { background: #0b1220; border: 1px solid #1f2937; border-radius: 12px; padding: 12px; text-align: center; }
+    .box .label { font-size: 12px; color: #94a3b8; }
+    .box .value { font-size: 20px; font-weight: 700; color: #f8fafc; }
+    .tabs { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+    .tabs button { background: #0b1220; border: 1px solid #1f2937; color: #cbd5e1; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+    .tabs button.active { border-color: #22d3ee; color: #22d3ee; }
+    .tab-panel { display: none; margin-top: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #1f2937; padding: 10px; font-size: 13px; }
+    th { text-align: left; color: #94a3b8; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .btn { background: #22d3ee; color: #06202a; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
+    .btn.secondary { background: #0b1220; color: #cbd5e1; border: 1px solid #1f2937; }
+    input[type=file] { width: 100%; padding: 14px; background: #0b1220; border: 1px solid #1f2937; border-radius: 10px; color: #cbd5e1; }
+    .muted { color: #94a3b8; font-size: 12px; }
+    footer { text-align:center; color:#64748b; padding:24px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Conciliação de Vendas — Minhas Vendas x Movimento Diário</h1>
+    <div class="muted">Extrai nº da venda (C: "126572 | 1" → 126572; A: "NF 126609/D1" → 126609), compara valores (H vs G) e organiza por vendedor.</div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Movimento diário (xlsx/csv)</label>
+          <input type="file" id="mov" accept=".xlsx,.csv"/>
+        </div>
+        <div>
+          <label>Minhas vendas (xlsx/csv)</label>
+          <input type="file" id="minhas" accept=".xlsx,.csv"/>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Tolerância (R$)</label>
+          <input type="number" id="tol" step="0.01" value="0.02" style="width:120px; padding:8px; border-radius:8px; border:1px solid #1f2937; background:#0b1220; color:#cbd5e1"/>
+        </div>
+        <div class="actions" style="align-items:end;">
+          <button class="btn" id="btnRun">Conciliar</button>
+          <button class="btn secondary" id="btnDownload" disabled>Baixar Excel</button>
+        </div>
+      </div>
+
+      <div id="kpi" class="kpi" style="display:none;">
+        <div class="box"><div class="label">Linhas totais</div><div class="value" id="k_total">0</div></div>
+        <div class="box"><div class="label">Bateram</div><div class="value" id="k_bateu">0</div></div>
+        <div class="box"><div class="label">Não bateram (valor)</div><div class="value" id="k_nao">0</div></div>
+        <div class="box"><div class="label">Não encontradas</div><div class="value" id="k_nao_rel">0</div></div>
+      </div>
+
+      <div class="tabs" id="tabs" style="display:none;">
+        <button data-tab="tab1" class="active">✅ Bateram</button>
+        <button data-tab="tab2">⚠️ Não bateram (valor)</button>
+        <button data-tab="tab3">🔎 Não encontradas (sem de/para)</button>
+        <button data-tab="tab4">📊 Resumo por vendedor</button>
+      </div>
+
+      <div id="tab1" class="tab-panel"></div>
+      <div id="tab2" class="tab-panel"></div>
+      <div id="tab3" class="tab-panel"></div>
+      <div id="tab4" class="tab-panel"></div>
+    </div>
+  </main>
+
+  <footer>Feito para Casa do Cigano • Vercel + Python API</footer>
+
+<script>
+const btnRun = document.getElementById('btnRun');
+const btnDownload = document.getElementById('btnDownload');
+const mov = document.getElementById('mov');
+const minhas = document.getElementById('minhas');
+const tol = document.getElementById('tol');
+
+let lastPayload = null;
+
+function setActive(tabId){
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+  document.querySelector(('.tabs button[data-tab="{tabId}"]')); // dummy to keep PS happy
+  document.querySelector('.tabs button[data-tab="' + tabId + '"]').classList.add('active');
+  document.querySelectorAll('.tab-panel').forEach(p => p.style.display='none');
+  document.getElementById(tabId).style.display='block';
+}
+
+document.getElementById('tabs').addEventListener('click', (e)=>{
+  if(e.target.tagName === 'BUTTON'){
+    setActive(e.target.getAttribute('data-tab'));
+  }
+});
+
+btnRun.addEventListener('click', async ()=>{
+  if(!mov.files[0] || !minhas.files[0]){
+    alert('Envie os dois arquivos.');
+    return;
+  }
+  const fd = new FormData();
+  fd.append('movimento', mov.files[0]);
+  fd.append('minhas', minhas.files[0]);
+  fd.append('tol', tol.value);
+
+  btnRun.disabled = true;
+  btnRun.textContent = 'Conciliando...';
+
+  const res = await fetch('/api/compare', { method: 'POST', body: fd });
+  btnRun.disabled = false;
+  btnRun.textContent = 'Conciliar';
+  if(!res.ok){
+    const txt = await res.text();
+    alert('Erro: ' + txt);
+    return;
+  }
+  const data = await res.json();
+  lastPayload = data;
+
+  // KPIs
+  document.getElementById('kpi').style.display = 'grid';
+  document.getElementById('k_total').textContent = data.total;
+  document.getElementById('k_bateu').textContent = data.q_bateu;
+  document.getElementById('k_nao').textContent = data.q_nao_bateu_valor;
+  document.getElementById('k_nao_rel').textContent = data.q_nao_rel;
+
+  // Tabs
+  document.getElementById('tabs').style.display = 'flex';
+  ['tab1','tab2','tab3','tab4'].forEach(id => document.getElementById(id).innerHTML = '');
+
+  // Render tables
+  function buildTable(rows, cols){
+    let html = '<div class="card"><table><thead><tr>' + cols.map(c=><th>{c}</th>).join('') + '</tr></thead><tbody>';
+    for(const r of rows){
+      html += '<tr>' + cols.map(c=><td>{r[c] ?? ''}</td>).join('') + '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  document.getElementById('tab1').innerHTML = buildTable(data.bateram, ['Vendedor','numero_venda','valor_movimento','valor_minhas_vendas']);
+  document.getElementById('tab2').innerHTML = buildTable(data.nao_bateram_valor, ['Vendedor','numero_venda','valor_movimento','valor_minhas_vendas']);
+  document.getElementById('tab3').innerHTML = buildTable(data.nao_encontradas, ['Vendedor','Origem','numero_venda','valor_movimento','valor_minhas_vendas']);
+  document.getElementById('tab4').innerHTML = buildTable(data.resumo, Object.keys(data.resumo[0] || {}));
+
+  setActive('tab1');
+  btnDownload.disabled = false;
+});
+
+btnDownload.addEventListener('click', async ()=>{
+  if(!lastPayload){ return; }
+  const b64 = lastPayload.excel_b64;
+  if(!b64){ alert('Excel não recebido. Rode a conciliação novamente.'); return; }
+  const a = document.createElement('a');
+  a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + b64;
+  a.download = 'comparacao_vendas.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+</script>
+</body>
+</html>
